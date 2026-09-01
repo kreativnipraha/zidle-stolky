@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pražské židle & stolky</title>
+
+    <link rel="stylesheet" href="css/leaflet.css">
+    <link rel="stylesheet" href="css/MarkerCluster.css">
+    <link rel="stylesheet" href="css/MarkerCluster.Default.css">
+    <link rel="stylesheet" href="css/qgis2web.css">
+
+    <style>
+        /* ── FONT: single Regular file, all weights mapped ── */
+        @font-face {
+            font-family: 'Theinhardt';
+            src: url('webfonts/Theinhardt-Regular.woff2') format('woff2');
+            font-weight: 1 999;
+            font-style: normal;
+            font-display: swap;
+        }
+
+        :root {
+            --ff:    'Theinhardt', Arial, sans-serif;
+            --ink:   #0a0907;
+            --bg:    #f4f3ef;
+            --glass: rgba(244,243,239,0.94);
+            --green: #37b34a;
+            --ease:  cubic-bezier(0.16,1,0.3,1);
+            --p:     clamp(14px, 4vw, 20px);
+        }
+
+        *, *::before, *::after {
+            margin: 0; padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            font-family: var(--ff);
+            font-weight: 400;
+            -webkit-font-smoothing: antialiased;
+            hyphens: none;
+            -webkit-hyphens: none;
+        }
+
+        html, body {
+            height: 100dvh;
+            overflow: hidden;
+            background: var(--bg);
+            color: var(--ink);
+            cursor: crosshair;
+        }
+
+        /* ══════════════════════════════════════════
+         * MAP
+         * ══════════════════════════════════════════ */
+        #map { position: absolute; inset: 0; z-index: 1; }
+
+        /* Kill Leaflet popup chrome */
+        .leaflet-popup,
+        .leaflet-popup-content-wrapper,
+        .leaflet-popup-tip-container { display: none !important; }
+
+        /* ── Cluster hover polygon — black instead of blue ── */
+        .leaflet-interactive:focus        { outline: none !important; }
+        .leaflet-marker-icon:focus        { outline: none !important; }
+
+        /* The MarkerCluster spiderfy/hull polygon */
+        .leaflet-cluster-anim .leaflet-marker-icon,
+        .leaflet-cluster-anim .leaflet-marker-shadow { transition: transform .3s ease, opacity .3s ease; }
+
+        /* ── attribution ── */
+        .leaflet-control-attribution {
+            font-family: var(--ff) !important;
+            font-size: 8px !important;
+            letter-spacing: .05em !important;
+            opacity: .25 !important;
+            background: transparent !important;
+            box-shadow: none !important;
+        }
+
+        /* ── ZOOM — top right, stark black squares ── */
+        .leaflet-top.leaflet-right { top: var(--p); right: var(--p); }
+        .leaflet-control-zoom {
+            border: none !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            display: flex !important;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .leaflet-control-zoom-in,
+        .leaflet-control-zoom-out {
+            width:  36px !important;
+            height: 36px !important;
+            line-height: 1 !important;
+            background: var(--ink) !important;
+            color: #fff !important;
+            border: none !important;
+            border-radius: 0 !important;
+            font-family: var(--ff) !important;
+            font-size: 20px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            cursor: pointer !important;
+            box-shadow: 0 3px 12px rgba(0,0,0,.22) !important;
+            transition: background .13s, color .13s !important;
+            text-indent: 0 !important;
+        }
+        .leaflet-interactive {
+        cursor: default !important;
+        }
+        .leaflet-control-zoom-in:hover,
+        .leaflet-control-zoom-out:hover {
+            background: var(--green) !important;
+            color: var(--ink) !important;
+        }
+
+        /* ── District labels (permanent, behind markers) ── */
+        .pzs-district-label {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            pointer-events: none !important;
+        }
+        .pzs-district-label .lbl {
+            font-size: 10px;
+            letter-spacing: .18em;
+            text-transform: uppercase;
+            color: var(--green);
+            opacity: .72;
+            white-space: nowrap;
+            pointer-events: none;
+            user-select: none;
+            text-shadow:
+                0 0 5px rgba(244,243,239,.95),
+                0 0 10px rgba(244,243,239,.6);
+        }
+
+        /* ── Custom square marker ── */
+        .pzs-marker {
+            width: 12px; height: 12px;
+            background: var(--ink);
+            cursor: pointer;
+            transition: transform .2s var(--ease), box-shadow .2s var(--ease);
+        }
+        .pzs-marker:hover {
+            transform: scale(1.8);
+            box-shadow: 0 0 0 3px rgba(55,179,74,.35);
+        }
+
+        /* ── Cluster badge — black bg, white text ── */
+        .pzs-cluster {
+            width: 34px; height: 34px;
+            background: var(--ink);
+            color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 11px;
+            letter-spacing: .04em;
+            box-shadow: 0 3px 12px rgba(0,0,0,.26);
+        }
+
+
+        /* ══════════════════════════════════════════
+         * GRAIN
+         * ══════════════════════════════════════════ */
+        .grain {
+            position: fixed; inset: 0;
+            background-image: url('https://grainy-gradients.vercel.app/noise.svg');
+            opacity: .04;
+            pointer-events: none;
+            z-index: 800;
+        }
+
+        /* ══════════════════════════════════════════
+         * UI SHELL
+         * ══════════════════════════════════════════ */
+        .app-ui { position: absolute; inset: 0; z-index: 10; pointer-events: none; }
+
+        /* ══════════════════════════════════════════
+         * POPUP
+         * ══════════════════════════════════════════ */
+        .info-popup {
+            position: absolute;
+            bottom: calc(clamp(40px,11vw,52px) + var(--p) + 14px);
+            left: 50%;
+            width: min(400px, calc(100vw - 2*var(--p)));
+            background: var(--green);
+            color: var(--ink);
+            padding: clamp(20px, 5vw, 30px);
+            transform: translateX(-50%) translateY(14px);
+            visibility: hidden;
+            opacity: 0;
+            border: 1px solid rgba(0,0,0,.07);
+            box-shadow:
+                0 1px 0  rgba(0,0,0,.05),
+                0 6px 14px rgba(0,0,0,.07),
+                0 22px 44px rgba(0,0,0,.10);
+            will-change: transform, opacity;
+            pointer-events: auto;
+        }
+        .info-popup::before {
+            content: ''; position: absolute; inset: 0; pointer-events: none;
+            background-image:
+                linear-gradient(rgba(0,0,0,.018) 1px, transparent 1px),
+                linear-gradient(90deg,rgba(0,0,0,.018) 1px, transparent 1px);
+            background-size: 18px 18px;
+        }
+
+        /* close × */
+        .popup-close {
+            position: absolute; top: 11px; right: 11px;
+            width: 28px; height: 28px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; opacity: .36;
+            transition: opacity .16s;
+            z-index: 3; pointer-events: auto;
+        }
+        .popup-close:hover { opacity: 1; }
+        .popup-close::before, .popup-close::after {
+            content: ''; position: absolute;
+            width: 13px; height: 1px; background: var(--ink);
+        }
+        .popup-close::before { transform: rotate(45deg); }
+        .popup-close::after  { transform: rotate(-45deg); }
+
+        .popup-inner { position: relative; z-index: 2; }
+
+        .popup-district {
+            display: inline-flex; align-items: center; gap: 5px;
+            font-size: 9px; letter-spacing: .18em; text-transform: uppercase;
+            opacity: .52; margin-bottom: 6px;
+        }
+        .popup-district-dot {
+            width: 4px; height: 4px;
+            background: var(--ink); border-radius: 50%; flex-shrink: 0;
+        }
+
+        .info-popup h2 {
+            font-size: clamp(22px, 7vw, 38px);
+            line-height: 1.0;
+            letter-spacing: -.01em;
+            text-transform: uppercase;
+            margin-bottom: clamp(16px, 4.5vw, 26px);
+            overflow-wrap: break-word;
+            word-break: normal;
+            max-width: 100%;
+        }
+
+        .stats-row {
+            display: flex; gap: clamp(16px, 5vw, 28px);
+            margin-bottom: clamp(16px, 4vw, 22px);
+        }
+        .stat-block { flex: 1; }
+        .stat-label {
+            display: block; font-size: 9px;
+            letter-spacing: .14em; text-transform: uppercase;
+            opacity: .48; margin-bottom: 5px;
+        }
+        .stat-value {
+            font-size: clamp(24px, 6.5vw, 34px);
+            letter-spacing: -.01em; line-height: 1;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .sq { width: 8px; height: 8px; background: var(--ink); flex-shrink: 0; }
+        .popup-meta {
+            margin-bottom: clamp(14px, 3.5vw, 20px);
+        }
+        .popup-meta-label {
+            display: block;
+            font-size: 9px;
+            letter-spacing: .14em;
+            text-transform: uppercase;
+            opacity: .48;
+            margin-bottom: 5px;
+        }
+        .popup-meta-value {
+            font-size: clamp(12px, 2.9vw, 15px);
+            line-height: 1.35;
+            max-width: 100%;
+            overflow-wrap: break-word;
+        }
+
+        .popup-divider { height: 1px; background: rgba(0,0,0,.1); margin-bottom: clamp(14px,3.5vw,20px); }
+        .popup-footer { display: flex; justify-content: space-between; align-items: center; }
+
+        .cta-btn {
+            background: var(--ink); color: var(--green);
+            border: none; padding: 10px 22px;
+            font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+            cursor: pointer;
+            transition: transform .13s var(--ease), background .13s;
+        }
+        .cta-btn:hover  { background: #1e1c1a; }
+        .cta-btn:active { transform: scale(.96); }
+        .popup-icon { opacity: .36; }
+
+        /* ══════════════════════════════════════════
+         * BOTTOM BAR — [logo] [search] [logo]
+         * Fixed-width, centred, no stretching on 4K
+         * ══════════════════════════════════════════ */
+        .bottom-bar {
+            position: absolute;
+            bottom: var(--p);
+            left: 50%;
+            transform: translateX(-50%);
+            /* Cap total width — search never stretches on ultrawide */
+            width: min(560px, calc(100vw - 2*var(--p)));
+            display: flex;
+            align-items: flex-end;
+            gap: 10px;
+            pointer-events: none;
+        }
+
+        /* ── LOGO SLOTS — transparent, SVG only ──
+         * SWAP: replace <div class="logo-ph"> with your <svg> or <img>
+         * Relative path from file location:
+         *   left  → logo/krep.svg
+         *   right → logo/mapk.svg
+         * ────────────────────────────────────────── */
+        .logo-slot {
+            width:  clamp(40px, 11vw, 52px);
+            height: clamp(40px, 11vw, 52px);
+            flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+            pointer-events: auto;
+            background: transparent;
+        }
+        .logo-link {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .logo-slot svg,
+        .logo-slot img {
+            width: 100%; height: 100%;
+            object-fit: contain; display: block;
+        }
+        /* placeholder cross */
+        .logo-ph {
+            width: 18px; height: 18px;
+            position: relative; opacity: .16;
+        }
+        .logo-ph::before, .logo-ph::after {
+            content: ''; position: absolute; background: var(--ink);
+            left: 50%; top: 50%; transform: translate(-50%,-50%);
+        }
+        .logo-ph::before { width: 100%; height: 1px; }
+        .logo-ph::after  { width: 1px;  height: 100%; }
+
+        /* ── Search takes remaining middle width ── */
+        .search-wrap { flex: 1; position: relative; pointer-events: auto; }
+        .bottom-note {
+            position: absolute;
+            left: 50%;
+            bottom: calc(var(--p) - 26px);
+            transform: translateX(-50%);
+            width: min(560px, calc(100vw - 2*var(--p)));
+            font-size: 8px;
+            line-height: 1.35;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            opacity: .42;
+            pointer-events: none;
+        }
+
+        /* Results panel: pops up above search bar */
+        .results-panel {
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 0; right: 0;
+            background: var(--glass);
+            backdrop-filter: blur(22px);
+            -webkit-backdrop-filter: blur(22px);
+            border: 1px solid rgba(0,0,0,.06);
+            max-height: 0; overflow: hidden; opacity: 0;
+            transition: max-height .4s var(--ease), opacity .3s var(--ease), padding .3s var(--ease);
+        }
+        .results-panel.open { max-height: 260px; opacity: 1; padding: 6px; }
+
+        .result-item {
+            padding: 11px 14px;
+            display: flex; justify-content: space-between; align-items: center;
+            cursor: pointer; transition: background .14s;
+        }
+        .result-item:hover { background: rgba(0,0,0,.05); }
+        .result-item h4 { font-size: 11px; letter-spacing: .07em; text-transform: uppercase; }
+        .result-item p  { font-size: 9px; opacity: .38; text-transform: uppercase; margin-top: 2px; letter-spacing: .05em; }
+        .result-arrow   { font-size: 10px; opacity: .22; }
+
+        /* ── suggestion chip header ── */
+        .result-header {
+            padding: 8px 14px 4px;
+            font-size: 8px; letter-spacing: .16em;
+            text-transform: uppercase; opacity: .35;
+        }
+
+        .search-bar {
+            background: var(--ink);
+            border-radius: 100px;
+            padding: clamp(12px,3.5vw,16px) clamp(16px,4vw,22px);
+            display: flex; align-items: center;
+            box-shadow: 0 10px 26px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.07);
+            transition: box-shadow .24s var(--ease);
+        }
+        .search-bar:focus-within {
+            box-shadow: 0 14px 32px rgba(0,0,0,.17), 0 0 0 2px var(--green);
+        }
+        .search-bar input {
+            background: transparent; border: none; outline: none;
+            color: #fff; width: 100%;
+            font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+        }
+        .search-bar input::placeholder { opacity: .32; }
+
+        .search-icon {
+            width: 13px; height: 13px; flex-shrink: 0; margin-right: 11px;
+            background: white;
+            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E") no-repeat center/contain;
+            -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z'/%3E%3C/svg%3E") no-repeat center/contain;
+        }
+
+        /* ── iOS safe area ── */
+        @supports (padding-bottom: env(safe-area-inset-bottom)) {
+            .bottom-bar { bottom: calc(var(--p) + env(safe-area-inset-bottom)); }
+        }
+    </style>
+</head>
+<body>
+
+<div class="grain"></div>
+<div id="map"></div>
+
+<div class="app-ui">
+
+    <!-- ══ POPUP ══ -->
+    <div class="info-popup" id="info-popup"
+         role="dialog" aria-modal="true" aria-labelledby="pop-title">
+        <div class="popup-close" id="popup-close"
+             aria-label="Zavřít" role="button" tabindex="0"></div>
+        <div class="popup-inner">
+            <div class="popup-district">
+                <span class="popup-district-dot"></span>
+                <span id="pop-sub">PRAHA</span>
+            </div>
+            <h2 id="pop-title">—</h2>
+            <div class="popup-meta">
+                <span class="popup-meta-label">Lok&aacute;ln&iacute; spr&aacute;vce</span>
+                <div class="popup-meta-value" id="pop-manager-top">&mdash;</div>
+            </div>
+            <div class="stats-row">
+                <div class="stat-block">
+                    <span class="stat-label">Židlí</span>
+                    <div class="stat-value"><div class="sq"></div><span id="pop-chairs">0</span></div>
+                </div>
+                <div class="stat-block">
+                    <span class="stat-label">Stolků</span>
+                    <div class="stat-value"><div class="sq"></div><span id="pop-tables">0</span></div>
+                </div>
+            </div>
+            <div class="popup-divider"></div>
+            <div class="popup-footer">
+                <svg class="popup-icon" width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M7 11v-7h10v7h2v-9h-14v9h2zm-2 1h14v10h-2v-3h-10v3h-2v-10zm12 5v-3h-10v3h10z"/>
+                </svg>
+                <button class="cta-btn" id="cta-btn">Otevřít v mapách →</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══ BOTTOM BAR ══ -->
+    <div class="bottom-bar">
+
+        <!-- LEFT LOGO
+             Relative path: logo/krep.svg
+             SWAP: replace <div class="logo-ph"> with <img src="logo/krep.svg" alt=""> -->
+        <div class="logo-slot logo-left">
+            <a class="logo-link" href="https://www.kreativnipraha.eu/cs" target="_blank" rel="noopener noreferrer" aria-label="Kreativn&iacute; Praha">
+                <img src="logo/krep.svg" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                <div class="logo-ph" style="display:none"></div>
+            </a>
+        </div>
+
+        <!-- SEARCH -->
+        <div class="search-wrap">
+            <div id="results-panel" class="results-panel">
+                <div id="results-list"></div>
+            </div>
+            <div class="search-bar">
+                <div class="search-icon"></div>
+                <input type="text" id="search-input"
+                       placeholder="Hledat lokalitu…"
+                       autocomplete="off" autocorrect="off" spellcheck="false">
+            </div>
+        </div>
+
+        <!-- RIGHT LOGO
+             Relative path: logo/mapk.svg
+             SWAP: replace <div class="logo-ph"> with <img src="logo/mapk.svg" alt=""> -->
+        <div class="logo-slot logo-right">
+            <a class="logo-link" href="https://app.mapk.cz/viewer/dashboards" target="_blank" rel="noopener noreferrer" aria-label="MAPK dashboardy">
+                <img src="logo/mapk.svg" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                <div class="logo-ph" style="display:none"></div>
+            </a>
+        </div>
+
+    </div><!-- /bottom-bar -->
+</div><!-- /app-ui -->
+
+<!-- ══ JS ══ -->
+<script src="js/config.js"></script>
+<script src="js/leaflet.js"></script>
+<script src="js/leaflet.markercluster.js"></script>
+<script src="js/qgis2web_expressions.js"></script>
+<script src="data/MC_Analyza_Zidle_0.js"></script>
+<script src="data/Zidle_2026_1.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+
+<script>
+/* ═══════════════════════════════════════════════════════
+ * 1. MAP
+ * ═══════════════════════════════════════════════════════ */
+const map = L.map('map', {
+    center: [50.0755, 14.4378],
+    zoom: 13,
+    zoomControl: false,
+    attributionControl: true
+});
+
+L.control.zoom({ position: 'topright' }).addTo(map);
+
+if (!window.CARTO_API_KEY) {
+    console.warn('CARTO_API_KEY missing — copy js/config.example.js to js/config.js and set your key (https://carto.com/basemaps/apikey).');
+}
+
+L.tileLayer('https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key=' + encodeURIComponent(window.CARTO_API_KEY || ''), {
+    attribution: '© OpenStreetMap © CARTO',
+    maxZoom: 19
+}).addTo(map);
+
+map.on('click', () => closePopup());
+
+/* ═══════════════════════════════════════════════════════
+ * 2. CUSTOM PANES (z-order: polygons < labels < markers)
+ * ═══════════════════════════════════════════════════════ */
+map.createPane('polygonPane');
+map.getPane('polygonPane').style.zIndex      = 300;
+map.getPane('polygonPane').style.pointerEvents = 'none';
+
+map.createPane('labelPane');
+map.getPane('labelPane').style.zIndex        = 350;
+map.getPane('labelPane').style.pointerEvents = 'none';
+
+/* ═══════════════════════════════════════════════════════
+ * 3. POLYGON + LABEL LAYER
+ * ═══════════════════════════════════════════════════════ */
+function isFeatureCollection(value) {
+    return !!(value && value.type === 'FeatureCollection' && Array.isArray(value.features));
+}
+
+function pickDatasetByPrefix(prefixes) {
+    const matches = Object.keys(window)
+        .filter(key => prefixes.some(prefix => key.startsWith(prefix)))
+        .filter(key => isFeatureCollection(window[key]))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+
+    return matches.length ? window[matches[matches.length - 1]] : null;
+}
+
+const VAR_DISTRICTS = pickDatasetByPrefix([
+    'json_MC_Analyza_Zidle_'
+]);
+
+if (VAR_DISTRICTS) {
+    L.geoJSON(VAR_DISTRICTS, {
+        pane: 'polygonPane',
+        style: function(f) {
+            const present = String(f.properties.zidle_present).toLowerCase() === 'true';
+            return {
+                color:       '#37b34a',
+                weight:       2.5,
+                opacity:      1,
+                fillColor:   '#37b34a',
+                fillOpacity:  present ? 0.12 : 0,
+                dashArray:    present ? null : null
+            };
+        }
+    }).addTo(map);
+
+    // Permanent centroid labels
+    VAR_DISTRICTS.features.forEach(function(f) {
+        const name = f.properties.NAZEV_ZUJ || f.properties.NAZEV || f.properties.nazev || '';
+        if (!name || !f.geometry) return;
+
+        // Bounding-box centroid (fast, sufficient for convex-ish districts)
+        let lngs = [], lats = [];
+        const collect = (arr) => {
+            if (!Array.isArray(arr[0])) return;
+            if (typeof arr[0][0] === 'number') {
+                arr.forEach(c => { lngs.push(c[0]); lats.push(c[1]); });
+            } else { arr.forEach(r => collect(r)); }
+        };
+        if (f.geometry.type === 'Polygon')      collect(f.geometry.coordinates);
+        if (f.geometry.type === 'MultiPolygon') f.geometry.coordinates.forEach(p => collect(p));
+        if (!lngs.length) return;
+
+        const cLng = (Math.min(...lngs) + Math.max(...lngs)) / 2;
+        const cLat  = (Math.min(...lats) + Math.max(...lats)) / 2;
+
+        L.marker([cLat, cLng], {
+            pane: 'labelPane',
+            interactive: false,
+            icon: L.divIcon({
+                className: 'pzs-district-label',
+                html: `<div class="lbl">${name}</div>`,
+                iconSize: null, iconAnchor: null
+            })
+        }).addTo(map);
+    });
+}
+
+/* ═══════════════════════════════════════════════════════
+ * 4. POINT LAYER
+ * ▼▼ Adjust field names to match your GeoJSON ▼▼
+ * ═══════════════════════════════════════════════════════ */
+const FIELD_NAME     = 'LOKALITA';
+const FIELD_DISTRICT = 'NAZEV_ZUJ';
+const FIELD_CHAIRS   = 'ZIDLE';
+const FIELD_TABLES   = 'STOLY';
+
+const VAR_POINTS = pickDatasetByPrefix([
+    'json_Zidle_'
+]);
+
+function makePzsIcon() {
+    return L.divIcon({
+        className: '',
+        html: '<div class="pzs-marker"></div>',
+        iconSize:   [12, 12],
+        iconAnchor: [6, 6]
+    });
+}
+
+let searchIndex = [];
+
+if (VAR_POINTS) {
+    const cluster = L.markerClusterGroup({
+        maxClusterRadius: 40,
+        /* override hull polygon colour via Leaflet path options */
+        polygonOptions: {
+            color:        '#0a0907',
+            fillColor:    '#0a0907',
+            opacity:      .35,
+            fillOpacity:  .06,
+            weight:        1.5
+        },
+        iconCreateFunction: function(c) {
+            return L.divIcon({
+                className: '',
+                html: `<div class="pzs-cluster">${c.getChildCount()}</div>`,
+                iconSize:   [34, 34],
+                iconAnchor: [17, 17]
+            });
+        }
+    });
+
+    VAR_POINTS.features.forEach(function(feature) {
+        const p      = feature.properties;
+        const name   = p[FIELD_NAME]     || 'Lokalita';
+        const dist   = p[FIELD_DISTRICT] || '';
+        const chairs = String(p[FIELD_CHAIRS] ?? '—');
+        const tables = String(p[FIELD_TABLES] ?? '—');
+        const manager = p.LOKALNISPRAVCE;
+        const latlng = [
+            feature.geometry.coordinates[1],
+            feature.geometry.coordinates[0]
+        ];
+
+        const marker = L.marker(latlng, { icon: makePzsIcon() });
+        marker.on('click', function(e) {
+            L.DomEvent.stopPropagation(e);
+            openPopup(name, dist, chairs, tables, manager, e.latlng);
+        });
+        cluster.addLayer(marker);
+        searchIndex.push({ name, dist, chairs, tables, manager, latlng });
+    });
+
+    map.addLayer(cluster);
+}
+
+/* ═══════════════════════════════════════════════════════
+ * 5. POPUP
+ * ═══════════════════════════════════════════════════════ */
+const popup      = document.getElementById('info-popup');
+const popupClose = document.getElementById('popup-close');
+const ctaBtn     = document.getElementById('cta-btn');
+let   popupOpen  = false;
+let   currentCoords = null;
+
+function formatLocalManager(value) {
+    if (value == null) return '\u2014';
+    const text = String(value).trim().replace(/^\/\/+/, '').trim();
+    return text || '\u2014';
+}
+
+function openPopup(title, district, chairs, tables, manager, coords) {
+    document.getElementById('pop-title').textContent  = title;
+    document.getElementById('pop-sub').textContent    = district || '';
+    document.getElementById('pop-chairs').textContent = chairs;
+    document.getElementById('pop-tables').textContent = tables;
+    document.getElementById('pop-manager-top').textContent = formatLocalManager(manager);
+    currentCoords = coords || null;
+
+    if (!popupOpen) {
+        gsap.set(popup, { visibility: 'visible' });
+        gsap.fromTo(popup,
+            { y: 40, opacity: 0, scale: .97 },
+            { y: 0,  opacity: 1, scale: 1, duration: .58, ease: 'expo.out', delay: .03 }
+        );
+        popupOpen = true;
+    } else {
+        gsap.fromTo(popup,
+            { scale: .98, opacity: .6 },
+            { scale: 1,   opacity: 1, duration: .28, ease: 'expo.out' }
+        );
+    }
+}
+
+function closePopup() {
+    if (!popupOpen) return;
+    gsap.to(popup, {
+        y: 18, opacity: 0, scale: .97, duration: .28, ease: 'power2.in',
+        onComplete: () => { popup.style.visibility = 'hidden'; popupOpen = false; }
+    });
+}
+
+popupClose.addEventListener('click', closePopup);
+popupClose.addEventListener('keydown', e => e.key === 'Enter' && closePopup());
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePopup(); });
+
+/* ═══════════════════════════════════════════════════════
+ * 6. CTA — mapy.com
+ * ═══════════════════════════════════════════════════════ */
+ctaBtn.addEventListener('click', () => {
+    const title = document.getElementById('pop-title').textContent;
+    const url = currentCoords
+        ? `https://mapy.com/?q=${currentCoords.lat}%2C${currentCoords.lng}&source=coor&id=${currentCoords.lng}%2C${currentCoords.lat}`
+        : `https://mapy.com/?q=${encodeURIComponent(title + ' Praha')}`;
+    window.open(url, '_blank', 'noopener');
+});
+
+/* ═══════════════════════════════════════════════════════
+ * 7. SEARCH + SUGGESTIONS
+ * Shows 3 random places when input is focused & empty.
+ * ═══════════════════════════════════════════════════════ */
+const searchInput  = document.getElementById('search-input');
+const resultsPanel = document.getElementById('results-panel');
+const resultsList  = document.getElementById('results-list');
+
+function pickRandom(arr, n) {
+    const copy = [...arr];
+    const out  = [];
+    while (out.length < n && copy.length) {
+        const i = Math.floor(Math.random() * copy.length);
+        out.push(copy.splice(i, 1)[0]);
+    }
+    return out;
+}
+
+function showSuggestions() {
+    if (!searchIndex.length) return;
+    const picks = pickRandom(searchIndex, 3);
+    resultsList.innerHTML = `<div class="result-header">Zkuste třeba…</div>`;
+    picks.forEach(item => appendResultRow(item));
+    resultsPanel.classList.add('open');
+}
+
+function appendResultRow(item) {
+    const row = document.createElement('div');
+    row.className = 'result-item';
+    row.innerHTML = `
+        <div><h4>${item.name}</h4><p>${item.dist}</p></div>
+        <span class="result-arrow">→</span>`;
+    row.addEventListener('click', () => {
+        map.flyTo(item.latlng, 16, { duration: 1.1, easeLinearity: .22 });
+        openPopup(item.name, item.dist, item.chairs, item.tables, item.manager, L.latLng(item.latlng));
+        resultsPanel.classList.remove('open');
+        searchInput.value = item.name;
+    });
+    resultsList.appendChild(row);
+}
+
+searchInput.addEventListener('focus', () => {
+    if (searchInput.value.trim() === '') showSuggestions();
+});
+
+searchInput.addEventListener('input', e => {
+    const val = e.target.value.toLowerCase().trim();
+    if (val.length > 0) {
+        resultsList.innerHTML = '';
+        const hits = searchIndex.filter(l => l.name.toLowerCase().includes(val));
+        if (!hits.length) {
+            resultsList.innerHTML = '<div class="result-item"><div><h4>Nic nenalezeno</h4></div></div>';
+        } else {
+            hits.forEach(item => appendResultRow(item));
+        }
+        resultsPanel.classList.add('open');
+    } else {
+        showSuggestions();
+    }
+});
+
+// Close panel on outside click
+document.addEventListener('click', e => {
+    if (!e.target.closest('.search-wrap')) {
+        resultsPanel.classList.remove('open');
+    }
+});
+
+/* ═══════════════════════════════════════════════════════
+ * 8. ENTRANCE ANIMATIONS
+ * ═══════════════════════════════════════════════════════ */
+
+gsap.from('.bottom-bar', {
+    opacity: 0, y: 16,
+    duration: 1.3, ease: 'expo.out', delay: .4
+});
+gsap.from('.leaflet-control-zoom', {
+    opacity: 0, y: -8,
+    duration: 1.1, ease: 'expo.out', delay: .35
+});
+</script>
+</body>
+</html>
